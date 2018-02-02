@@ -1,32 +1,115 @@
-if (!self.MigemoJS) MigemoJS = {
-  getScriptURL: function () {
-    var script = document.getElementById ('script-migemojs');
-    if (script) {
-      return script.src;
+'use strict'
+
+const mydump = function(aString){
+/*
+	if (DEBUG)
+		dump((aString.length > 1024 ? aString.substring(0, 1024) : aString )+'\n');
+*/
+};
+
+const MigemoTextUtils = {
+/* string operations */ 
+	
+	trim : function(aInput){
+		return aInput
+				.replace(this.kTRIM_PATTERN, '');
+	},
+	kTRIM_PATTERN : /^\s+|\s+$/g,
+   
+/* manipulate regular expressions */ 
+	
+	sanitize : function(str){
+		//	[]^.+*?$|{}\(),  正規表現のメタキャラクタをエスケープ
+		str = str.replace(this.kSANITIZE_PATTERN, "\\$1");
+		return str;
+	},
+	kSANITIZE_PATTERN : /([\-\:\}\{\|\$\?\*\+\.\^\]\/\[\;\\\(\)])/g,
+ 
+	sanitizeForTransformInput : function(str){
+		//	()[]|\,
+		str = str.replace(this.kSANITIZE_PATTERN_INPUT, "\\$1");
+		return str;
+	},
+	kSANITIZE_PATTERN_INPUT : /([\(\)\[\]\|\\])/g,
+ 
+	sanitizeForTransformOutput : function(str){
+		//	^.+*?${},
+		str = str.replace(this.kSANITIZE_PATTERN_OUTPUT, "\\$1");
+		return str;
+	},
+	kSANITIZE_PATTERN_OUTPUT : /([\-\:\}\{\$\?\*\+\.\^\/\;])/g
+}; 
+
+const MigemoCompat = {
+  arraymap: function (array, code, self) {
+    if (array.map) {
+      return array.map (code, self);
+    } else {
+      const list = [];
+      for (let i = 0; i < array.length; i++) {
+        list.push (code.apply (self || this, [array[i]]));
+      }
+      return list;
     }
-    return null;
-  }, // getScriptURL
+  }, // arraymap
+  arrayfilter: function (array, code) {
+    if (array.filter) {
+      return array.filter (code);
+    } else {
+      const list = [];
+      for (let i = 0; i < array.length; i++) {
+        if (code (array[i])) {
+          list.push (array[i]);
+        }
+      }
+      return list;
+    }
+  } // arrayfilter
+}; // MigemoCompat
 
-  getRegExp : function(aInput, autoSplit) {
-    this.engine = this.engine || new MigemoJS.Engine ();
-    var engine = this.engine;
 
-    var myExp = [];
 
-    var romanTerm;
-    var romanTerms = engine.splitInput(aInput);
-    mydump('ROMAN: '+romanTerms.join('/').toLowerCase()+'\n');
+let _instance = null;
+let _symbol = Symbol();
 
-    var pattern, romanTermPart, nextPart;
-    for (var i = 0, maxi = romanTerms.length; i < maxi; i++) {
-      romanTerm = romanTerms[i].toLowerCase ();
-      romanTerm = engine.normalizeKeyInput (romanTerm);
+class MigemoJS{
+	constructor(target, options){
+		if( _symbol !== target || _instance !== null){
+			throw new Error('use MigemoJS.getInstance()');
+		}
+		this.engine = new MigemoEngine(options);
+		this.simplePartOnlyPattern = /^([^\|]+)\|([^\|]+)\|([^\|]+)\|([^\|]+)$/i;
+		_instance = this;
+		return _instance;
+	}
 
-      pattern = engine.getRegExpFor (romanTerm);
-      if (!pattern) continue;
-      myExp.push (pattern);
+	static getInstance(_options){
+		const options = Object.assign({}, {baseUrl: '/dicts/', debug_loading: false}, _options);
+		if(_instance === null){
+			_instance = new MigemoJS(_symbol, options);
+		}
+		return _instance;
+	}
 
-      if (!autoSplit) continue;
+	getRegExp(aInput, autoSplit){
+		const engine = this.engine;
+
+		let myExp = [];
+
+		let romanTerm;
+		const romanTerms = engine.splitInput(aInput);
+		mydump('ROMAN: '+romanTerms.join('/').toLowerCase()+'\n');
+
+		let pattern, romanTermPart, nextPart;
+		for (let i = 0, maxi = romanTerms.length; i < maxi; i++) {
+			romanTerm = romanTerms[i].toLowerCase ();
+			romanTerm = engine.normalizeKeyInput (romanTerm);
+
+			pattern = engine.getRegExpFor (romanTerm);
+			if (!pattern) continue;
+			myExp.push (pattern);
+
+			if (!autoSplit) continue;
 
 			romanTermPart = romanTerm;
 			while (romanTermPart.length > 1)
@@ -48,68 +131,67 @@ if (!self.MigemoJS) MigemoJS = {
 		}
 
 		myExp = (myExp.length == 1) ? myExp[0] :
-				(myExp.length) ? ['(', myExp.join(')([ \t]+)?('), ')'].join('').replace(/\n/g, '') :
-				'' ;
+			(myExp.length) ? ['(', myExp.join(')([ \t]+)?('), ')'].join('').replace(/\n/g, '') :
+			'' ;
 
 		myExp = myExp.replace(/\n|^\||\|$/g, '')
-					.replace(/([^\\]|^)\|\|+/g, '$1|')
-					.replace(/([^\\]|^)\(\|/g, '$1(')
-					.replace(/([^\\]|^)\|\)/g, '$1)');
+			.replace(/([^\\]|^)\|\|+/g, '$1|')
+			.replace(/([^\\]|^)\(\|/g, '$1(')
+			.replace(/([^\\]|^)\|\)/g, '$1)');
 
 		mydump('created pattern: '+encodeURIComponent(myExp));
 
 		return myExp;
-	},
- 
-	simplePartOnlyPattern : /^([^\|]+)\|([^\|]+)\|([^\|]+)\|([^\|]+)$/i
+	}
 }; // MigemoJS.RegExpGenerator
 
-MigemoJS.Engine = function () {
-  this.dictionary = new MigemoJS.Dictionary ();
-  this.dictionary.loadAll ();
-  this.transform = new MigemoJS.TextTransform ();
-}; // MigemoJS.Engine
 
-MigemoJS.Engine.prototype = {
-  normalizeKeyInput: function (input) {
-    return this.transform.normalizeKeyInput (input);
-  }, // normalizeKeyInput
+class MigemoEngine{
+	constructor(options){
+		this.dictionary = new MigemoDictionary(options);
+		this.dictionary.loadAll();
+		this.transform = new MigemoTextTransform();
+	}
 
-  getRegExpFor: function(aInput) {
+	normalizeKeyInput(input){
+		return this.transform.normalizeKeyInput(input);
+	}
+
+	getRegExpFor(aInput){
 		if (!aInput) return null;
 
 		aInput = aInput.toLowerCase();
 
-		var transform = this.transform;
+		const transform = this.transform;
 
-		var hira = transform.expand(
-				MigemoJS.TextUtils.sanitizeForTransformOutput(
+		const hira = transform.expand(
+				MigemoTextUtils.sanitizeForTransformOutput(
 					transform.roman2kana(
 						transform.kata2hira(
-							MigemoJS.TextUtils.sanitizeForTransformInput(aInput)
+							MigemoTextUtils.sanitizeForTransformInput(aInput)
 						)
 					)
 				)
 			);
 
-		var roman = aInput;
+		let roman = aInput;
 		if (/[\uff66-\uff9f]/.test(roman)) roman = transform.hira2roman(transform.kata2hira(roman))
-		var ignoreHiraKata = true;
-		var kana = ignoreHiraKata ? '' :
+		const ignoreHiraKata = true;
+		const kana = ignoreHiraKata ? '' :
 				transform.expand2(
-					MigemoJS.TextUtils.sanitizeForTransformOutput(
+					MigemoTextUtils.sanitizeForTransformOutput(
 						transform.roman2kana2(
-							MigemoJS.TextUtils.sanitizeForTransformInput(roman),
+							MigemoTextUtils.sanitizeForTransformInput(roman),
 							transform.KANA_KATA
 						)
 					),
 					transform.KANA_KATA
 				);
-		var hiraAndKana = ignoreHiraKata ?
-				transform.expand2(
-					MigemoJS.TextUtils.sanitizeForTransformOutput(
+		const hiraAndKana = ignoreHiraKata ?
+		  transform.expand2(
+					MigemoTextUtils.sanitizeForTransformOutput(
 						transform.roman2kana2(
-							MigemoJS.TextUtils.sanitizeForTransformInput(roman),
+							MigemoTextUtils.sanitizeForTransformInput(roman),
 							transform.KANA_ALL
 						)
 					),
@@ -118,31 +200,31 @@ MigemoJS.Engine.prototype = {
 				hira + '|' + kana ;
 		mydump('hiraAndKana: '+encodeURIComponent(hiraAndKana));
 
-		var zen = transform.roman2zen(aInput); // aInput ?
+		const zen = transform.roman2zen(aInput); // aInput ?
 		mydump('zen: '+encodeURIComponent(zen));
 
-		var lines = this.gatherEntriesFor(aInput);
+		const lines = this.gatherEntriesFor(aInput);
 
-		var original = MigemoJS.TextUtils.sanitize(aInput);
-                var ignoreLatinModifiers = true;
+		let original = MigemoTextUtils.sanitize(aInput);
+		const ignoreLatinModifiers = true;
 		if (ignoreLatinModifiers)
 			original = transform.addLatinModifiers(original);
 
-		var pattern = '';
+		let pattern = '';
 		if (lines.length) {
-			var arr = [];
+			const arr = [];
 			if (!/[\[\(]/.test(zen)) arr.push(zen);
 			if (!/[\[\(]/.test(hiraAndKana)) {
 				arr.push(hira);
 				arr.push(kana);
 			}
-			var searchterm = arr.concat(lines).join('\n').replace(/(\t|\n\n)+/g, '\n');
+			let searchterm = arr.concat(lines).join('\n').replace(/(\t|\n\n)+/g, '\n');
 
 			if (/[\[\(]/.test(zen)) pattern += (pattern ? '|' : '') + zen;
 			if (/[\[\(]/.test(hiraAndKana)) pattern += (pattern ? '|' : '') + hiraAndKana;
 
 			// 一文字だけの項目だけは、抜き出して文字クラスにまとめる
-			var ichimoji = searchterm
+			const ichimoji = searchterm
 							.replace(/^..+$\n?/mg, '')
 							.split('\n')
 							.sort()
@@ -160,7 +242,7 @@ MigemoJS.Engine.prototype = {
 				.join('\n')
 				.replace(/^(.+)$(\n\1.*$)+/img, '$1')
 				.replace(/^.$\n?/mg, ''); // 一文字だけの項目は用済みなので削除
-			searchterm = MigemoJS.TextUtils.sanitize(searchterm)
+			searchterm = MigemoTextUtils.sanitize(searchterm)
 				.replace(/\n/g, '|');
 			pattern += (pattern ? '|' : '') + searchterm;//.substring(0, searchterm.length-1);
 
@@ -180,11 +262,10 @@ MigemoJS.Engine.prototype = {
 				.replace(/([^\\]|^)\|\|+/g, '$1|')
 				.replace(/([^\\]|^)\(\|/g, '$1(')
 				.replace(/([^\\]|^)\|\)/g, '$1)');
-	},
+	}
  
-	splitInput : function(aInput) 
-	{
-		var terms = (
+	splitInput(aInput){
+		let terms = (
 					(/^[A-Z]{2,}/.test(aInput)) ?
 						aInput.replace(/([a-z])/g, '\t$1') : // CapsLockされてる場合は小文字で区切る
 						aInput.replace(/([A-Z])/g, '\t$1')
@@ -200,119 +281,57 @@ MigemoJS.Engine.prototype = {
 				.split('\t');
 
 		return terms;
-	},
+	}
  
-	gatherEntriesFor : function(aInput) 
-	{
+	gatherEntriesFor(aInput){
 		if (!aInput) {
 			return [];
 		}
 
-		var transform = this.transform;
+		const transform = this.transform;
 
-		var hira = transform.expand(
-					MigemoJS.TextUtils.sanitize(
+		const hira = transform.expand(
+					MigemoTextUtils.sanitize(
 						transform.roman2kana(
 							transform.kata2hira(aInput)
 						)
 					)
 				);
 
-		var str = MigemoJS.TextUtils.sanitize(aInput);
-                var ignoreLatinModifiers = true;
+		let str = MigemoTextUtils.sanitize(aInput);
+		const ignoreLatinModifiers = true;
 		if (ignoreLatinModifiers)
 			str = transform.addLatinModifiers(str);
 
-		var tmp  = '^' + hira + '.+$'; //日本語
-		var tmpA = '^(' + str + ').+$'; //アルファベット
-		var exp  = new RegExp(tmp, 'mg');
-		var expA = new RegExp(tmpA, 'mg');
+		const tmp  = '^' + hira + '.+$'; //日本語
+		const tmpA = '^(' + str + ').+$'; //アルファベット
+		const exp  = new RegExp(tmp, 'mg');
+		const expA = new RegExp(tmpA, 'mg');
 
-		var firstlet = '';
-		firstlet = aInput.charAt(0);//最初の文字
+		const firstlet = aInput.charAt(0);//最初の文字
 		mydump(firstlet+' dic loaded');
 
-		var lines = [];
+		let lines = [];
 
-                var dict = this.dictionary;
-                var dA = dict.getAlphaDic();
+                const dict = this.dictionary;
+                const dA = dict.getAlphaDic();
                 if (dA) {
-                        var lA = dA.match(expA);
+                        const lA = dA.match(expA);
                         if (lA) lines = lines.concat(lA);
                 }
-                var d = dict.getDicFor(firstlet);
+                const d = dict.getDicFor(firstlet);
                 if (d) {
-                        var l = d.match(exp);
+                        const l = d.match(exp);
                         if (l) lines = lines.concat(l);
                 }
 
 		return lines;
 	}
- 
-}; 
+}
 
-MigemoJS.TextUtils = {
-/* string operations */ 
-	
-	trim : function(aInput) 
-	{
-		return aInput
-				.replace(this.kTRIM_PATTERN, '');
-	},
-	kTRIM_PATTERN : /^\s+|\s+$/g,
-   
-/* manipulate regular expressions */ 
-	
-	sanitize : function(str) 
-	{
-		//	[]^.+*?$|{}\(),  正規表現のメタキャラクタをエスケープ
-		str = str.replace(this.kSANITIZE_PATTERN, "\\$1");
-		return str;
-	},
-	kSANITIZE_PATTERN : /([\-\:\}\{\|\$\?\*\+\.\^\]\/\[\;\\\(\)])/g,
- 
-	sanitizeForTransformInput : function(str) 
-	{
-		//	()[]|\,
-		str = str.replace(this.kSANITIZE_PATTERN_INPUT, "\\$1");
-		return str;
-	},
-	kSANITIZE_PATTERN_INPUT : /([\(\)\[\]\|\\])/g,
- 
-	sanitizeForTransformOutput : function(str) 
-	{
-		//	^.+*?${},
-		str = str.replace(this.kSANITIZE_PATTERN_OUTPUT, "\\$1");
-		return str;
-	},
-	kSANITIZE_PATTERN_OUTPUT : /([\-\:\}\{\$\?\*\+\.\^\/\;])/g
-}; 
+class MigemoTextTransform{
 
-MigemoJS.TextTransform = function () {
-	this.init();
-};
-
-MigemoJS.TextTransform.prototype = {
-	isValidInput : function(aInput)
-	{
-		return this.isYomi(aInput);
-	},
-
-	normalizeInput : function(aInput)
-	{
-		return this.normalizeForYomi(aInput);
-	},
-
-	normalizeKeyInput : function(aInput)
-	{
-		return this.hira2roman(
-				this.normalizeForYomi(
-					this.kata2hira(aInput)
-				)
-			);
-	},
-
-	LATIN_LETTES_WITH_MODIFIERS : [ 
+	static LATIN_LETTES_WITH_MODIFIERS = [ 
 'a	[a\u00e0\u00e1\u00e2\u00e3\u00e4\u00e5\u0101\u0103\u0105\u01ce\u01fb\u01df\u01e1\u00c0\u00c1\u00c2\u00c3\u00c4\u00c5\u0100\u0102\u0104\u01cd\u01fa\u01de\u01e0]|a([\u02cb`\u02ca\u00b4\u02c6\^\u02dc~\u00a8\u02da\u00b0\u02c9\u00af\u02d8\u02db\u02c7]|\u02da\u02ca|\u02ca\u02da|\u00a8[\u02c9\u00af]|[\u02c9\u00af]\u00a8|\u02d9[\u02c9\u00af]|[\u02c9\u00af]\u02d9)',
 'ae	ae|[\u00e6\u01fd\u01e3\u00c6\u01fc\u01e2]|(ae|[\u00e6\u00c6])[\u02ca\u00b4\u02c9\u00af]',
 'c	[c\u00e7\u0107\u0109\u010b\u010d\u00c7\u0106\u0108\u010a\u010c]|c[\u00b8\u02ca\u00b4\u02c6\^\u02d9\u02c7]',
@@ -340,206 +359,11 @@ MigemoJS.TextTransform.prototype = {
 'w	[w\u1e81\u1e83\u1e85\u0175\u1e80\u1e82\u1e84\u0174]|w[\u02cb`\u02ca\u00b4\u00a8\u02c6\^]',
 'y	[y\u1ef3\u00fd\u00ff\u0177\u1ef2\u00dd\u0178\u0176]|y[\u02cb`\u02ca\u00b4\u00a8\u02c6\^]',
 'z	[z\u017a\u017c\u017e\u0179\u017b\u017d]|z[\u02ca\u00b4\u02d9\u02c7]'
-	].join('\n'),
- 
-	initLatin : function() 
-	{
-		var self = this;
+	].join('\n');
 
-		this.LATMOD      = [];
-		this.LATMOD_Hash = {};
-		this.LATPAT      = [];
-		this.MODPAT      = [];
-
-		var pairs = MigemoJS.TextUtils.trim(this.LATIN_LETTES_WITH_MODIFIERS).split(/\s+/);
-		for (var i = 0, maxi = pairs.length; i < maxi; i += 2)
-		{
-			this.LATMOD.push({ key : pairs[i], char : pairs[i+1] });
-			this.LATMOD_Hash[pairs[i]] = pairs[i+1];
-			this.LATPAT.push({ key : pairs[i], char : pairs[i+1] });
-			this.MODPAT.push(pairs[i+1]);
-		}
-
-		this.LATPAT = MigemoJS.compat.arraymap(this.LATPAT.sort(function(aA, aB) {
-			return aB.key.length - aA.key.length;
-		}), function(aItem) {
-			return aItem.key;
-		}).join('|');
-		this.LATPAT = new RegExp('('+this.LATPAT+')', 'ig');
-
-		this.MODPAT = this.MODPAT.sort(function(aA, aB) {
-			return (aB.length - aA.length);
-		}).join('|');
-		this.MODPAT = new RegExp('('+this.MODPAT+')', 'ig');
-	},
-
-	addLatinModifiers : function(aInput)
-	{
-		var hash = this.LATMOD_Hash;
-		return this.removeLatinModifiers(aInput)
-			.replace(this.LATPAT, function(aChar) {
-				return '('+hash[aChar]+')';
-			});
-	},
-
-	removeLatinModifiers : function(aInput)
-	{
-		var table = this.LATMOD;
-		return String(aInput).replace(this.MODPAT, function(aChar) {
-				for (var i in table)
-				{
-					regexp = new RegExp('^('+table[i].char+')$', 'i')
-					if (!regexp.test(aChar)) continue;
-					aChar = table[i].key;
-					break;
-				}
-				return aChar;
-			});
-	},
- 
-	KANA_HIRA : 1,
-	KANA_KATA : 2,
-	KANA_ALL  : 4,
- 
-	normalizeForYomi : function(aStr) 
-	{
-		return this.kata2hira(
-				this.zenkaku2hankaku((aStr || '').toLowerCase())
-			);
-	},
- 
-	isYomi : function(aStr) 
-	{
-		aStr = aStr || '' ;
-		var alph = this.zenkaku2hankaku(aStr.toLowerCase());
-		if (/^[-a-z0-9]+$/i.test(alph))
-			return true;
-
-		return this.kata2hira(aStr).replace(/[\u3041-\u3093\u309b\u309c\u30fc]/g, '') ? false : true ;
-	},
- 
-	init : function() 
-	{
-		var self = this;
-                this.initLatin();
-
-		this.ROMKAN     = [];
-		this.ROMKAN_Hash = {};
-		this.ROMPAT     = [];
-
-		this.KANROM     = [];
-		this.KANROM_Hash = {};
-		this.KANPAT     = [];
-
-		var pairs = MigemoJS.TextUtils.trim(this.CUSTOMTAB +'\t'+ this.KUNREITAB +'\t'+ this.HEPBURNTAB).split(/\s+/);
-		var ROMKAN_Hash_multiple = {};
-		for (var i = 0, maxi = pairs.length; i < maxi; i += 2)
-		{
-			this.ROMKAN.push({ key : pairs[i+1], char : pairs[i] });
-			if (pairs[i+1] in this.ROMKAN_Hash) {
-				if (this.ROMKAN_Hash[pairs[i+1]].indexOf(pairs[i]) < 0) {
-					this.ROMKAN_Hash[pairs[i+1]] = this.ROMKAN_Hash[pairs[i+1]]+'|'+pairs[i];
-					ROMKAN_Hash_multiple[pairs[i+1]] = true;
-				}
-			}
-			else {
-				this.ROMKAN_Hash[pairs[i+1]] = pairs[i];
-			}
-			this.ROMPAT.push({ key : pairs[i+1], char : pairs[i] });
-
-			this.KANROM.push({ key : pairs[i], char : pairs[i+1] });
-			this.KANROM_Hash[pairs[i]] = pairs[i+1];
-			this.KANPAT.push({ key : pairs[i], char : pairs[i+1] });
-		}
-		for (var i in ROMKAN_Hash_multiple)
-		{
-			this.ROMKAN_Hash[i] = this.optimizeRegExp('('+this.ROMKAN_Hash[i]+')');
-		}
-
-
-		// Sort in long order so that a longer Romaji sequence precedes.
-		this.ROMPAT = MigemoJS.compat.arraymap(this.ROMPAT.sort(function(aA, aB) {
-			return aB.key.length - aA.key.length;
-		}), function(aItem) {
-			return aItem.key;
-		}).join('|');
-		this.ROMINITIALPAT = this.ROMPAT.replace(
-				/([^\|])[^\|]+(\||$)/g, '$1$2'
-			).split('|');
-		this.ROMINITIALPAT.sort();;
-		this.ROMINITIALPAT = new RegExp(
-			'['+
-			this.ROMINITIALPAT.join('|').replace(
-				/([^\|])(\|\1)+/g, '$1'
-			).replace(/\|/g, '')+
-			']',
-			'i'
-		);
-		this.ROMPAT = new RegExp('('+this.ROMPAT+')', 'ig');
-
-		this.KANPAT = MigemoJS.compat.arraymap(this.KANPAT.sort(function(aA, aB) {
-			return (aB.key.length - aA.key.length) ||
-				(self.KANROM_Hash[aA.key].length - self.KANROM_Hash[aB.key].length);
-		}), function(aItem) {
-			return aItem.key;
-		}).join('|');
-		this.KANPAT = new RegExp('('+this.KANPAT+')', 'ig');
-
-		this.KUNREI = MigemoJS.compat.arrayfilter(this.KUNREITAB.split(/\s+/), function(aItem, aIndex) {
-			return (aIndex % 2 == 0);
-		});
-		this.HEPBURN = MigemoJS.compat.arrayfilter(this.HEPBURNTAB.split(/\s+/), function(aItem, aIndex) {
-			return (aIndex % 2 == 0);
-		});
-
-//		this.KUNPAT; KUNREI.sort  {|a, b| b.length <=> a.length }.join "|"
-//		this.HEPPAT; HEPBURN.sort {|a, b| b.length <=> a.length }.join "|"
-
-		this.TO_HEPBURN_Hash = {};
-		this.TO_HEPBURN = MigemoJS.compat.arraymap(this.KUNREI, function(aItem, aIndex) {
-			self.TO_HEPBURN_Hash[aItem] = self.HEPBURN[aIndex];
-			return { key : aItem, char : self.HEPBURN[aIndex] };
-		});
-		this.TO_KUNREI_Hash = {};
-		this.TO_KUNREI = MigemoJS.compat.arraymap(this.HEPBURN, function(aItem, aIndex) {
-			self.TO_KUNREI_Hash[aItem] = self.KUNREI[aIndex];
-			return { key : aItem, char : self.KUNREI[aIndex] };
-		});
-
-
-		this.KATAHIRA_Hash = {};
-		this.KATAPAT       = [];
-
-		this.HIRAKATA_Hash     = {};
-		this.HIRAKATA_ZEN_Hash = {};
-		this.HIRAPAT           = [];
-
-		pairs = this.KANATAB.replace(/^\s+|\s+$/g, '').split(/\s+/);
-		var kata;
-		for (i = 0, maxi = pairs.length; i < maxi; i += 2)
-		{
-			kata = pairs[i+1]
-			MigemoJS.compat.arraymap(kata.split('|'), function(aKata, aIndex) {
-				if (aKata == '-') return; // 例外
-				self.KATAHIRA_Hash[aKata] = pairs[i];
-				self.KATAPAT.push(aKata);
-				if (aIndex == 0) {
-					self.HIRAKATA_ZEN_Hash[pairs[i]] = aKata;
-				}
-			});
-			this.HIRAKATA_Hash[pairs[i]] = '('+kata+')'
-				.replace(/\((.)\|(.)\)/, '[$1$2]')
-				.replace(/\((.)\|(.)\|(.)\)/, '[$1$2$3]');
-			this.HIRAPAT.push(pairs[i]);
-		}
-
-		this.KATAPAT = new RegExp('('+this.KATAPAT.join('|')+')', 'ig');
-		this.HIRAPAT = new RegExp('('+this.HIRAPAT.join('|')+')', 'ig');
-	},
- 
 /* based on Ruby/Romkan ( http://0xcc.net/ruby-romkan/ ) */ 
 	
-	KUNREITAB : [ 
+	static KUNREITAB = [ 
 '\u3041	xa	\u3042	a	\u3043	xi	\u3044	i	\u3045	xu',
 '\u3046	u	\u3046\u309b	vu	\u3046\u309b\u3041	va	\u3046\u309b\u3043	vi 	\u3046\u309b\u3047	ve',
 '\u3046\u309b\u3049	vo	\u3047	xe	\u3048	e	\u3049	xo	\u304a	o ',
@@ -614,9 +438,9 @@ MigemoJS.TextTransform.prototype = {
 '\u3061\u3047    tye',
 '\u3063\u3061\u3047	ttye',
 '\u3058\u3047	zye'
-	].join('\n'),
+	].join('\n');
  
-	HEPBURNTAB : [ 
+	static HEPBURNTAB = [ 
 '\u3041	xa	\u3042	a	\u3043	xi	\u3044	i	\u3045	xu',
 '\u3046	u	\u3046\u309b	vu	\u3046\u309b\u3041	va	\u3046\u309b\u3043	vi	\u3046\u309b\u3047	ve',
 '\u3046\u309b\u3049	vo	\u3047	xe	\u3048	e	\u3049	xo	\u304a	o',
@@ -691,9 +515,9 @@ MigemoJS.TextTransform.prototype = {
 '\u3061\u3047    che',
 '\u3063\u3061\u3047	cche',
 '\u3058\u3047	je'
-	].join('\n'),
+	].join('\n');
  
-	CUSTOMTAB : [ 
+	static CUSTOMTAB = [ 
 '\u3046\u3043	wi',
 '\u3046\u3047	we',
 '\u3060	dha	\u3063\u3067\u3083	ddha',
@@ -754,179 +578,11 @@ MigemoJS.TextTransform.prototype = {
 '\u3063\u3046	wwu',
 '\u3063\u3046\u3047	wwe',
 '\u3063\u3092	wwo'
-	].join('\n'),
- 
-	/*
-		FIXME: ad hod solution
-		tanni   => tan'i
-		kannji  => kanji
-		hannnou => han'nou
-		hannnya => han'nya
-	*/
-	normalize_double_n : function(aString) 
-	{
-		return String(aString)
-			.toLowerCase()
-			.replace(/nn/i, 'n\'')
-			.replace(/n\'(?=[^aiueoyn]|$)/, 'n');
-	},
- 
-	/*
-		Romaji -> Kana
-		It can handle both Hepburn and Kunrei sequences.
-	*/
-	roman2kana : function(aString) 
-	{
-		return this.roman2kana2(aString, this.KANA_HIRA);
-	},
-	
-	roman2kana2 : function(aString, aKana) 
-	{
-		var self = this;
-		var hash = this.ROMKAN_Hash;
-		var func = (aKana == this.KANA_ALL) ?
-					function(aChar) {
-						var str = hash[aChar];
-						if (str.charAt(0) == '[')
-							str = '('+(str.substring(1, str.length-1).split('').join('|'))+')';
-						var result = '';
-						var char;
-						while (str.length > 0)
-						{
-							if (str.indexOf('\u3046\u309b') == 0) { // 「う゛」だけは特例で一文字扱い
-								char = str.substring(0, 2);
-								str  = str.substring(1);
-							}
-							else {
-								char = str.charAt(0);
-							}
-							if (/[\(\)\|]/.test(char)) {
-								result += char;
-							}
-							else {
-								result += (
-										'('+
-										char+'|'+
-										self.hira2kataPattern(char).replace(/^\(|\)$/g, '')+
-										')'
-									).replace(/(.)\|\1/g, '$1');
-							}
-							str = str.substring(1);
-						}
-						return self.optimizeRegExp(result);
-					} :
-					(aKana == this.KANA_KATA) ?
-					function(aChar) {
-						return self.hira2kataPattern(hash[aChar]);
-					} :
-					function(aChar) {
-						return hash[aChar];
-					};
-		var ret = this.optimizeRegExp(
-				this.normalize_double_n(
-						String(aString).toLowerCase()
-					)
-					.replace(this.ROMPAT, func)
-			);
-//dump(aString+' -> '+encodeURIComponent(ret)+'\n');
-		return ret;
-	},
-  
-	/*
-		Kana -> Romaji.
-		Return Hepburn sequences.
-	*/
-	hira2roman : function(aString) 
-	{
-		var self = this;
-		return String(aString).toLowerCase()
-			.replace(this.KANPAT, function(aChar) {
-				return self.KANROM_Hash[aChar];
-			})
-			.replace(/n\'(?=[^aeiuoyn]|$)/, 'n');
-	},
- 
-	/*
-		Romaji -> Romaji
-		Normalize into Hepburn sequences.
-		e.g. kannzi -> kanji, tiezo -> chiezo
-	*/
-	to_hepburn : function(aString) 
-	{
-/*
-		return this.normalize_double_n(String(aString).toLowerCase())
-			.replace(/\G((?:#{HEPPAT})*?)(#{KUNPAT})/, function(aChar) {
-				return $1 + TO_HEPBURN[$2];
-			});
-*/
-	},
- 
-	/*
-		Romaji -> Romaji
-		Normalize into Kunrei sequences.
-		e.g. kanji -> kanzi, chiezo -> tiezo
-	*/
-	to_kunrei : function(aString) 
-	{
-/*
-		return this.normalize_double_n(String(aString).toLowerCase())
-			.replace(/\G((?:#{KUNPAT})*?)(#{HEPPAT})/, function(aChar) {
-				return $1 + TO_KUNREI[$2];
-			});
-*/
-	},
- 
-	expand : function(aString) 
-	{
-		return this.expand2(aString, this.KANA_HIRA);
-	},
-	
-	expand2 : function(aString, aKana) 
-	{
-		var target = aString.match(/[-a-z]+$/i);
-		if (!target) return aString;
-
-		if (!((this.ROMINITIALPAT).test(target))) {
-			return aString;
-		}
-
-		var base   = aString.replace(/[-a-z]+$/i, '');
-
-		var regexp = new RegExp('^'+target+'.*$', 'i');
-		var checked = {};
-		var entries = MigemoJS.compat.arrayfilter(this.ROMKAN, function(aItem) {
-				var ret = regexp.test(aItem.key) && !(aItem.key in checked);
-				checked[aItem.key] = true;
-				return ret;
-			});
-
-		if (!entries.length) return aString;
-
-		var last = MigemoJS.compat.arraymap(entries, function(aItem) {
-				return this.roman2kana2(aItem.key, aKana);
-			}, this);
-		last = (last.length > 1) ? '('+last.join('|')+')' : last[0] ;
-
-		return base + this.optimizeRegExp(last);
-	},
-  
-	optimizeRegExp : function(aString) 
-	{
-		var ret = aString
-			.replace(/([^\\]|^)\|\|+/g, '$1|')
-			.replace(/([^\\]|^)\(\|/g, '$1\(').replace(/([^\\]|^)\|\)/g, '$1\)')
-			.replace(/([^\\]|^)\(\)/g, '$1\)')
-			.replace(/([^\\]|^)\(([^()\[\]|]*[^()\[\]|\\])\)/g, '$1$2')
-			.replace(/([^\\]|^)\[([^()\[\]|\\])\]/g, '$1$2')
-			.replace(/\([^()\[\]|](\|[^()\[\]|])+\)/g, function(aString) {
-				return '['+(aString.substring(1, aString.length-1).split('|').join(''))+']';
-			});
-		return ret;
-	},
+	].join('\n');
   
 /* hiragana, katakana */ 
 	
-	KANATAB : [ 
+	static KANATAB = [ 
 '\u3046\u309b	\u30f4|\uff73\uff9e',
 
 '\u3042	\u30a2|\uff71',
@@ -1034,41 +690,403 @@ MigemoJS.TextTransform.prototype = {
 '\u3001	\u3001|\uff64',
 
 '\u3063	\u30c3|\uff6f'
-	].join('\n'),
+	].join('\n');
+
+	constructor(){
+		this.KANA_HIRA = 1;
+		this.KANA_KATA = 2,
+		this.KANA_ALL  = 4,
+		this.init();
+	}
+
+	isValidInput(aInput){
+		return this.isYomi(aInput);
+	}
+
+	normalizeInput(aInput){
+		return this.normalizeForYomi(aInput);
+	}
+
+	normalizeKeyInput(aInput){
+		return this.hira2roman(
+				this.normalizeForYomi(
+					this.kata2hira(aInput)
+				)
+			);
+	}
+
+	initLatin(){
+		this.LATMOD      = [];
+		this.LATMOD_Hash = {};
+		this.LATPAT      = [];
+		this.MODPAT      = [];
+
+		const pairs = MigemoTextUtils.trim(MigemoTextTransform.LATIN_LETTES_WITH_MODIFIERS).split(/\s+/);
+		for (let i = 0, maxi = pairs.length; i < maxi; i += 2)
+		{
+			this.LATMOD.push({ key : pairs[i], char : pairs[i+1] });
+			this.LATMOD_Hash[pairs[i]] = pairs[i+1];
+			this.LATPAT.push({ key : pairs[i], char : pairs[i+1] });
+			this.MODPAT.push(pairs[i+1]);
+		}
+
+		this.LATPAT = MigemoCompat.arraymap(this.LATPAT.sort(function(aA, aB) {
+			return aB.key.length - aA.key.length;
+		}), function(aItem) {
+			return aItem.key;
+		}).join('|');
+		this.LATPAT = new RegExp('('+this.LATPAT+')', 'ig');
+
+		this.MODPAT = this.MODPAT.sort(function(aA, aB) {
+			return (aB.length - aA.length);
+		}).join('|');
+		this.MODPAT = new RegExp('('+this.MODPAT+')', 'ig');
+	}
+
+	addLatinModifiers(aInput){
+		const hash = this.LATMOD_Hash;
+		return this.removeLatinModifiers(aInput)
+			.replace(this.LATPAT, function(aChar) {
+				return '('+hash[aChar]+')';
+			});
+	}
+
+	removeLatinModifiers(aInput){
+		const table = this.LATMOD;
+		return String(aInput).replace(this.MODPAT, function(aChar) {
+				for (let i in table)
+				{
+					let regexp = new RegExp('^('+table[i].char+')$', 'i')
+					if (!regexp.test(aChar)) continue;
+					aChar = table[i].key;
+					break;
+				}
+				return aChar;
+			});
+	}
  
-	hira2kata : function(aString) 
-	{
-		var hash = this.HIRAKATA_ZEN_Hash;
+	normalizeForYomi(aStr){
+		return this.kata2hira(
+				this.zenkaku2hankaku((aStr || '').toLowerCase())
+			);
+	}
+ 
+	isYomi(aStr){
+		aStr = aStr || '' ;
+		const alph = this.zenkaku2hankaku(aStr.toLowerCase());
+		if (/^[-a-z0-9]+$/i.test(alph))
+			return true;
+
+		return this.kata2hira(aStr).replace(/[\u3041-\u3093\u309b\u309c\u30fc]/g, '') ? false : true ;
+	}
+ 
+	init(){
+		let self = this;
+		this.initLatin();
+
+		this.ROMKAN     = [];
+		this.ROMKAN_Hash = {};
+		this.ROMPAT     = [];
+
+		this.KANROM     = [];
+		this.KANROM_Hash = {};
+		this.KANPAT     = [];
+
+		let pairs = MigemoTextUtils.trim(MigemoTextTransform.CUSTOMTAB +'\t'+ MigemoTextTransform.KUNREITAB +'\t'+ MigemoTextTransform.HEPBURNTAB).split(/\s+/);
+		const ROMKAN_Hash_multiple = {};
+		for (let i = 0, maxi = pairs.length; i < maxi; i += 2)
+		{
+			this.ROMKAN.push({ key : pairs[i+1], char : pairs[i] });
+			if (pairs[i+1] in this.ROMKAN_Hash) {
+				if (this.ROMKAN_Hash[pairs[i+1]].indexOf(pairs[i]) < 0) {
+					this.ROMKAN_Hash[pairs[i+1]] = this.ROMKAN_Hash[pairs[i+1]]+'|'+pairs[i];
+					ROMKAN_Hash_multiple[pairs[i+1]] = true;
+				}
+			}
+			else {
+				this.ROMKAN_Hash[pairs[i+1]] = pairs[i];
+			}
+			this.ROMPAT.push({ key : pairs[i+1], char : pairs[i] });
+
+			this.KANROM.push({ key : pairs[i], char : pairs[i+1] });
+			this.KANROM_Hash[pairs[i]] = pairs[i+1];
+			this.KANPAT.push({ key : pairs[i], char : pairs[i+1] });
+		}
+		for (let i in ROMKAN_Hash_multiple)
+		{
+			this.ROMKAN_Hash[i] = this.optimizeRegExp('('+this.ROMKAN_Hash[i]+')');
+		}
+
+
+		// Sort in long order so that a longer Romaji sequence precedes.
+		this.ROMPAT = MigemoCompat.arraymap(this.ROMPAT.sort(function(aA, aB) {
+			return aB.key.length - aA.key.length;
+		}), function(aItem) {
+			return aItem.key;
+		}).join('|');
+		this.ROMINITIALPAT = this.ROMPAT.replace(
+				/([^\|])[^\|]+(\||$)/g, '$1$2'
+			).split('|');
+		this.ROMINITIALPAT.sort();;
+		this.ROMINITIALPAT = new RegExp(
+			'['+
+			this.ROMINITIALPAT.join('|').replace(
+				/([^\|])(\|\1)+/g, '$1'
+			).replace(/\|/g, '')+
+			']',
+			'i'
+		);
+		this.ROMPAT = new RegExp('('+this.ROMPAT+')', 'ig');
+
+		this.KANPAT = MigemoCompat.arraymap(this.KANPAT.sort(function(aA, aB) {
+			return (aB.key.length - aA.key.length) ||
+				(self.KANROM_Hash[aA.key].length - self.KANROM_Hash[aB.key].length);
+		}), function(aItem) {
+			return aItem.key;
+		}).join('|');
+		this.KANPAT = new RegExp('('+this.KANPAT+')', 'ig');
+
+		this.KUNREI = MigemoCompat.arrayfilter(MigemoTextTransform.KUNREITAB.split(/\s+/), function(aItem, aIndex) {
+			return (aIndex % 2 == 0);
+		});
+		this.HEPBURN = MigemoCompat.arrayfilter(MigemoTextTransform.HEPBURNTAB.split(/\s+/), function(aItem, aIndex) {
+			return (aIndex % 2 == 0);
+		});
+
+//		this.KUNPAT; KUNREI.sort  {|a, b| b.length <=> a.length }.join "|"
+//		this.HEPPAT; HEPBURN.sort {|a, b| b.length <=> a.length }.join "|"
+
+		this.TO_HEPBURN_Hash = {};
+		this.TO_HEPBURN = MigemoCompat.arraymap(this.KUNREI, function(aItem, aIndex) {
+			self.TO_HEPBURN_Hash[aItem] = self.HEPBURN[aIndex];
+			return { key : aItem, char : self.HEPBURN[aIndex] };
+		});
+		this.TO_KUNREI_Hash = {};
+		this.TO_KUNREI = MigemoCompat.arraymap(this.HEPBURN, function(aItem, aIndex) {
+			self.TO_KUNREI_Hash[aItem] = self.KUNREI[aIndex];
+			return { key : aItem, char : self.KUNREI[aIndex] };
+		});
+
+
+		this.KATAHIRA_Hash = {};
+		this.KATAPAT       = [];
+
+		this.HIRAKATA_Hash     = {};
+		this.HIRAKATA_ZEN_Hash = {};
+		this.HIRAPAT           = [];
+
+		pairs = MigemoTextTransform.KANATAB.replace(/^\s+|\s+$/g, '').split(/\s+/);
+		let kata;
+		for (let i = 0, maxi = pairs.length; i < maxi; i += 2)
+		{
+			kata = pairs[i+1]
+			MigemoCompat.arraymap(kata.split('|'), function(aKata, aIndex) {
+				if (aKata == '-') return; // 例外
+				self.KATAHIRA_Hash[aKata] = pairs[i];
+				self.KATAPAT.push(aKata);
+				if (aIndex == 0) {
+					self.HIRAKATA_ZEN_Hash[pairs[i]] = aKata;
+				}
+			});
+			this.HIRAKATA_Hash[pairs[i]] = '('+kata+')'
+				.replace(/\((.)\|(.)\)/, '[$1$2]')
+				.replace(/\((.)\|(.)\|(.)\)/, '[$1$2$3]');
+			this.HIRAPAT.push(pairs[i]);
+		}
+
+		this.KATAPAT = new RegExp('('+this.KATAPAT.join('|')+')', 'ig');
+		this.HIRAPAT = new RegExp('('+this.HIRAPAT.join('|')+')', 'ig');
+	}
+ 
+ 
+	/*
+		FIXME: ad hod solution
+		tanni   => tan'i
+		kannji  => kanji
+		hannnou => han'nou
+		hannnya => han'nya
+	*/
+	normalize_double_n(aString){
+		return String(aString)
+			.toLowerCase()
+			.replace(/nn/i, 'n\'')
+			.replace(/n\'(?=[^aiueoyn]|$)/, 'n');
+	}
+ 
+	/*
+		Romaji -> Kana
+		It can handle both Hepburn and Kunrei sequences.
+	*/
+	roman2kana(aString){
+		return this.roman2kana2(aString, this.KANA_HIRA);
+	}
+	
+	roman2kana2(aString, aKana){
+		let self = this;
+		const hash = this.ROMKAN_Hash;
+		const func = (aKana == this.KANA_ALL) ?
+					function(aChar) {
+						let str = hash[aChar];
+						if (str.charAt(0) == '[')
+							str = '('+(str.substring(1, str.length-1).split('').join('|'))+')';
+						let result = '';
+						let char;
+						while (str.length > 0)
+						{
+							if (str.indexOf('\u3046\u309b') == 0) { // 「う゛」だけは特例で一文字扱い
+								char = str.substring(0, 2);
+								str  = str.substring(1);
+							}
+							else {
+								char = str.charAt(0);
+							}
+							if (/[\(\)\|]/.test(char)) {
+								result += char;
+							}
+							else {
+								result += (
+										'('+
+										char+'|'+
+										self.hira2kataPattern(char).replace(/^\(|\)$/g, '')+
+										')'
+									).replace(/(.)\|\1/g, '$1');
+							}
+							str = str.substring(1);
+						}
+						return self.optimizeRegExp(result);
+					} :
+					(aKana == this.KANA_KATA) ?
+					function(aChar) {
+						return self.hira2kataPattern(hash[aChar]);
+					} :
+					function(aChar) {
+						return hash[aChar];
+					};
+		const ret = this.optimizeRegExp(
+				this.normalize_double_n(
+						String(aString).toLowerCase()
+					)
+					.replace(this.ROMPAT, func)
+			);
+//dump(aString+' -> '+encodeURIComponent(ret)+'\n');
+		return ret;
+	}
+  
+	/*
+		Kana -> Romaji.
+		Return Hepburn sequences.
+	*/
+	hira2roman(aString){
+		var self = this;
+		return String(aString).toLowerCase()
+			.replace(this.KANPAT, function(aChar) {
+				return self.KANROM_Hash[aChar];
+			})
+			.replace(/n\'(?=[^aeiuoyn]|$)/, 'n');
+	}
+ 
+	/*
+		Romaji -> Romaji
+		Normalize into Hepburn sequences.
+		e.g. kannzi -> kanji, tiezo -> chiezo
+	*/
+	to_hepburn(aString){
+/*
+		return this.normalize_double_n(String(aString).toLowerCase())
+			.replace(/\G((?:#{HEPPAT})*?)(#{KUNPAT})/, function(aChar) {
+				return $1 + TO_HEPBURN[$2];
+			});
+*/
+	}
+ 
+	/*
+		Romaji -> Romaji
+		Normalize into Kunrei sequences.
+		e.g. kanji -> kanzi, chiezo -> tiezo
+	*/
+	to_kunrei(aString){
+/*
+		return this.normalize_double_n(String(aString).toLowerCase())
+			.replace(/\G((?:#{KUNPAT})*?)(#{HEPPAT})/, function(aChar) {
+				return $1 + TO_KUNREI[$2];
+			});
+*/
+	}
+ 
+	expand(aString){
+		return this.expand2(aString, this.KANA_HIRA);
+	}
+	
+	expand2(aString, aKana){
+		const target = aString.match(/[-a-z]+$/i);
+		if (!target) return aString;
+
+		if (!((this.ROMINITIALPAT).test(target))) {
+			return aString;
+		}
+
+		const base   = aString.replace(/[-a-z]+$/i, '');
+
+		const regexp = new RegExp('^'+target+'.*$', 'i');
+		const checked = {};
+		let entries = MigemoCompat.arrayfilter(this.ROMKAN, function(aItem) {
+				const ret = regexp.test(aItem.key) && !(aItem.key in checked);
+				checked[aItem.key] = true;
+				return ret;
+			});
+
+		if (!entries.length) return aString;
+
+		let last = MigemoCompat.arraymap(entries, function(aItem) {
+				return this.roman2kana2(aItem.key, aKana);
+			}, this);
+		last = (last.length > 1) ? '('+last.join('|')+')' : last[0] ;
+
+		return base + this.optimizeRegExp(last);
+	}
+  
+	optimizeRegExp(aString){
+		const ret = aString
+			.replace(/([^\\]|^)\|\|+/g, '$1|')
+			.replace(/([^\\]|^)\(\|/g, '$1\(').replace(/([^\\]|^)\|\)/g, '$1\)')
+			.replace(/([^\\]|^)\(\)/g, '$1\)')
+			.replace(/([^\\]|^)\(([^()\[\]|]*[^()\[\]|\\])\)/g, '$1$2')
+			.replace(/([^\\]|^)\[([^()\[\]|\\])\]/g, '$1$2')
+			.replace(/\([^()\[\]|](\|[^()\[\]|])+\)/g, (aString) => {
+				return '['+(aString.substring(1, aString.length-1).split('|').join(''))+']';
+			});
+		return ret;
+	}
+ 
+	hira2kata(aString){
+		let hash = this.HIRAKATA_ZEN_Hash;
 		return this.joinVoiceMarks(String(aString))
-			.replace(this.HIRAPAT, function(aChar) {
+			.replace(this.HIRAPAT, (aChar) => {
 				return hash[aChar];
 			});
-	},
+	}
  
-	hira2kataPattern : function(aString) 
-	{
-		var hash = this.HIRAKATA_Hash;
+	hira2kataPattern(aString){
+		let hash = this.HIRAKATA_Hash;
 		return this.joinVoiceMarks(String(aString))
-			.replace(this.HIRAPAT, function(aChar) {
+			.replace(this.HIRAPAT, (aChar) => {
 				return hash[aChar];
 			});
-	},
+	}
  
-	kata2hira : function(aString) 
-	{
-		var hash = this.KATAHIRA_Hash;
+	kata2hira(aString){
+		let hash = this.KATAHIRA_Hash;
 		return this.joinVoiceMarks(String(aString))
-			.replace(this.KATAPAT, function(aChar) {
+			.replace(this.KATAPAT, (aChar) => {
 				return hash[aChar];
 			});
-	},
+	}
  
-	roman2zen : function(aStr) 
-	{
-		var output='';	//the result string
-		var c;	//iterates for each of characters in the input
-		var n;	//character code (unicode)
-		for(var i=0; i<aStr.length;i++)
+	roman2zen(aStr){
+		let output='';	//the result string
+		let c;	//iterates for each of characters in the input
+		let n;	//character code (unicode)
+		for(let i=0; i<aStr.length;i++)
 		{
 			c = aStr.charAt(i);
 			n = c.charCodeAt(0);  //      0xff01-0xff5e
@@ -1079,27 +1097,23 @@ MigemoJS.TextTransform.prototype = {
 			output += c;
 		}
 		return output;
-	},
+	}
  
-	zenkaku2hankaku : function(aStr) 
-	{
+	zenkaku2hankaku(aStr){
 		return aStr.replace(/[\uff10-\uff19\uff21-\uff3a\uff41-\uff5a]/g, this.zenkaku2hankakuSub);
-	},
+	}
 	
-	zenkaku2hankakuSub : function(aStr) 
-	{
-		var code = aStr.charCodeAt(0);
+	zenkaku2hankakuSub(aStr){
+		const code = aStr.charCodeAt(0);
 		return String.fromCharCode(code - 0xfee0)
-	},
+	}
   
-	joinVoiceMarks : function(aStr) 
-	{
+	joinVoiceMarks(aStr){
 		return (aStr || '').replace(/[\u304b\u304d\u304f\u3051\u3053\u3055\u3057\u3059\u305b\u305d\u305f\u3061\u3064\u3066\u3068\u306f\u3072\u3075\u3078\u307b\u30a6\u30ab\u30ad\u30af\u30b1\u30b3\u30b5\u30b7\u30b9\u30bb\u30bd\u30bf\u30c1\u30c4\u30c6\u30c8\u30cf\u30d2\u30d5\u30d8\u30db\uff73\uff76-\uff84\uff8a-\uff8e][\uff9e\u309b]|[\u306f\u3072\u3075\u3078\u307b\u30cf\u30d2\u30d5\u30d8\u30db\uff8a-\uff8e][\uff9f\u309c]/g, this.joinVoiceMarksSub);
-	},
+	}
 	
-	joinVoiceMarksSub : function(aStr) 
-	{
-		var code = aStr.charCodeAt(0);
+	joinVoiceMarksSub(aStr){
+		const code = aStr.charCodeAt(0);
 
 		// 全角かな
 		if (/^[\u304b\u304d\u304f\u3051\u3053\u3055\u3057\u3059\u305b\u305d\u305f\u3061\u3064\u3066\u3068\u306f\u3072\u3075\u3078\u307b\u30ab\u30ad\u30af\u30b1\u30b3\u30b5\u30b7\u30b9\u30bb\u30bd\u30bf\u30c1\u30c4\u30c6\u30c8\u30cf\u30d2\u30d5\u30d8\u30db][\uff9e\u309b]/.test(aStr)) {
@@ -1147,57 +1161,53 @@ MigemoJS.TextTransform.prototype = {
 		}
 	}
    
-}; 
+}
 
-MigemoJS.Dictionary = function () { };
+class MigemoDictionary{
+	constructor(options){
+		this.baseUrl = options.baseUrl;
+		this.DEBUG_LOADING = options.debug_loading;
+		this.list = [];
+		this.cList = ['', 'k', 's', 't', 'h', 'm', 'n', 'y', 'r', 'w', 'd', 'z', 'g', 'p', 'b', 'alph']; 
+	}
 
-MigemoJS.Dictionary.prototype = {
-  getBaseURL: function () {
-    var url = MigemoJS.getScriptURL () || location.href;
-    url = url.replace (/#.*/, '').replace (/\?.*/, '');
-    url = url.replace (/\/[^\/]*\/[^\/]*$/, '/');
-    return url+ 'dicts/';
-  }, // getBaseURL
+	getBaseURL(){
+		let url = MigemoJS.getScriptURL () || location.href;
+		url = url.replace (/#.*/, '').replace (/\?.*/, '');
+		url = url.replace (/\/[^\/]*\/[^\/]*$/, '/');
+		return url+ 'dicts/';
+	} // getBaseURL
 
-  loadAll: function () {
-    var self = this;
-    var base = this.getBaseURL ();
-    var suffix = this.DEBUG_LOADING ? '?' + (new Date).valueOf () : '';
-    for (var i = 0, maxi = this.cList.length; i < maxi; i++) {
-      var letter = this.cList[i];
-      var fileName = base + letter + 'a2.txt' + suffix;
-      var xhr = new XMLHttpRequest();
-      xhr.open('GET', fileName, true);
-      xhr.onreadystatechange = (function (xhr, letter) { return function () {
-        if (xhr.readyState == 4) {
-          if (xhr.status < 400) {
-            self.list[letter] = xhr.responseText;
-          }
-        }
-      } }) (xhr, letter);
-      xhr.send(null);
-    }
-  }, // loadAll
+	loadAll(){
+		// const base = this.getBaseURL ();
+		const base = this.baseUrl;
+		const suffix = this.DEBUG_LOADING ? '?' + (new Date).valueOf () : '';
+		for (let i = 0, maxi = this.cList.length; i < maxi; i++) {
+			const letter = this.cList[i];
+			const fileName = base + letter + 'a2.txt' + suffix;
+			const xhr = new XMLHttpRequest();
+			xhr.open('GET', fileName, true);
+			xhr.onreadystatechange = ((xhr, letter) => { return () => {
+				if (xhr.readyState == 4) {
+					if (xhr.status < 400) {
+						this.list[letter] = xhr.responseText;
+					}
+				}
+			} }) (xhr, letter);
+			xhr.send(null);
+		}
+	} // loadAll
  
-	getDicFor : function(aLetter) 
-	{
+	getDicFor(aLetter){
 		return this.getDicInternal(aLetter);
-	},
+	}
 
-	getAlphaDic : function() 
-	{
+	getAlphaDic(){
 		return this.list['alph'];
-	},
+	}
   
-	// internal 
-	
-	list : [], 
- 
-	cList : ['', 'k', 's', 't', 'h', 'm', 'n', 'y', 'r', 'w', 'd', 'z', 'g', 'p', 'b', 'alph'], 
-
-	getDicInternal : function(aLetter) 
-	{
-		var suffix = '';
+	getDicInternal(aLetter){
+		const suffix = '';
 
 		switch (aLetter)
 		{
@@ -1245,41 +1255,6 @@ MigemoJS.Dictionary.prototype = {
 		}
 	}
   
-}; 
-
-MigemoJS.compat = {
-  arraymap: function (array, code, self) {
-    if (array.map) {
-      return array.map (code, self);
-    } else {
-      var list = [];
-      for (var i = 0; i < array.length; i++) {
-        list.push (code.apply (self || this, [array[i]]));
-      }
-      return list;
-    }
-  }, // arraymap
-  arrayfilter: function (array, code) {
-    if (array.filter) {
-      return array.filter (code);
-    } else {
-      var list = [];
-      for (var i = 0; i < array.length; i++) {
-        if (code (array[i])) {
-          list.push (array[i]);
-        }
-      }
-      return list;
-    }
-  } // arrayfilter
-}; // MigemoJS.compat
-
-function mydump(aString) 
-{
-/*
-	if (DEBUG)
-		dump((aString.length > 1024 ? aString.substring(0, 1024) : aString )+'\n');
-*/
 }
 
 /*
@@ -1311,3 +1286,4 @@ See following git repositories for the latest version:
 - <http://suika.fam.cx/gate/git/wi/migemojs.git/tree>
 
 */
+export default MigemoJS;
